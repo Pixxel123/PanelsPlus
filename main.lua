@@ -30,6 +30,7 @@ local Menu = require("src.menu")
 local Memory = require("src._memory")
 local NativePanelZoom = require("src.native_panel_zoom")
 local Settings = require("src._settings")
+local SpreadRotation = require("src.spread_rotation")
 local Timing = require("src._timing")
 local ViewerController = require("src.viewer_controller")
 
@@ -70,6 +71,7 @@ include(PanelsPlus, ViewerController)
 include(PanelsPlus, Actions)
 include(PanelsPlus, Menu)
 include(PanelsPlus, NativePanelZoom)
+include(PanelsPlus, SpreadRotation)
 
 --- Initialize settings, panel cache state, menu registration, actions, and hook.
 function PanelsPlus:init()
@@ -89,6 +91,7 @@ end
 function PanelsPlus:onReaderReady()
     self:loadDocSettings()
     self:applyPanelGesture()
+    self:startSpreadRotation()
 end
 
 --- Return the file path or key for the active document.
@@ -264,6 +267,18 @@ end
 function PanelsPlus:setImageRotation(angle)
     self.settings.image_rotation = angle
     self:saveSettings()
+end
+
+--- Save the spread rotation mode and apply it to the page being read.
+---
+--- @param mode PPAutoRotateSpreads `"off"`, `"cw"`, or `"ccw"`.
+function PanelsPlus:setAutoRotateSpreads(mode)
+    if mode ~= "cw" and mode ~= "ccw" then
+        mode = "off"
+    end
+    self.settings.auto_rotate_spreads = mode
+    self:saveSettings()
+    self:applySpreadRotationSetting()
 end
 
 --- Toggle whether swipe direction is inverted relative to reading order.
@@ -465,6 +480,7 @@ end
 function PanelsPlus:onSaveSettings()
     self:saveSettings()
     self:saveDocSettings()
+    self:keepSpreadRotationOutOfDocSettings()
 end
 
 --- KOReader close hook: drop scheduled work and restore native panel zoom.

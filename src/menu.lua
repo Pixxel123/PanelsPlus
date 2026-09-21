@@ -23,6 +23,13 @@ function Menu:getDetector()
     return "components"
 end
 
+--- Return the active automatic spread-rotation mode.
+---
+--- @return PPAutoRotateSpreads mode Current mode, defaulting to `"off"`.
+function Menu:getAutoRotateSpreads()
+    return self.settings.auto_rotate_spreads or "off"
+end
+
 --- Return the main-menu label for the current reading mode.
 ---
 --- @return string text Localized menu label.
@@ -102,6 +109,45 @@ function Menu:addToMainMenu(menu_items)
                         help_text = _(
                             "A tap with two fingers opens the panel under them, and a long press is left to KOReader or other plugins. Needs a multi-touch screen."
                         ),
+                    },
+                },
+                separator = true,
+            },
+            {
+                text = _("Auto-rotate double-page spreads"),
+                help_text = _(
+                    "Rotates double-page spreads (pages much wider than they are tall) by a quarter turn to fill a portrait screen, and restores the rotation on the next normal page. On the reading page the screen is rotated. In the panel viewer only the whole-spread view is rotated and zoomed panels stay upright. Does nothing while the screen is in landscape or while an image rotation is set in the viewer's rotation picker."
+                ),
+                sub_item_table = {
+                    {
+                        text = _("Off"),
+                        checked_func = function()
+                            return self:getAutoRotateSpreads() == "off"
+                        end,
+                        radio = true,
+                        callback = function()
+                            self:setAutoRotateSpreads("off")
+                        end,
+                    },
+                    {
+                        text = _("Clockwise"),
+                        checked_func = function()
+                            return self:getAutoRotateSpreads() == "cw"
+                        end,
+                        radio = true,
+                        callback = function()
+                            self:setAutoRotateSpreads("cw")
+                        end,
+                    },
+                    {
+                        text = _("Counter-clockwise"),
+                        checked_func = function()
+                            return self:getAutoRotateSpreads() == "ccw"
+                        end,
+                        radio = true,
+                        callback = function()
+                            self:setAutoRotateSpreads("ccw")
+                        end,
                     },
                 },
                 separator = true,

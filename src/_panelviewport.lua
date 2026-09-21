@@ -10,6 +10,7 @@ License: MIT; see the repository LICENSE file.
 SPDX-License-Identifier: MIT
 ]]
 local Screen = require("device").screen
+local Spread = require("src._spread")
 
 --- Shared panel-viewport geometry.
 ---
@@ -24,8 +25,9 @@ local PanelViewport = {}
 ---
 --- @param rect PPPanel Selected panel rectangle in source coordinates.
 --- @param source_size PPPageSize Source-page or source-image dimensions.
+--- @param rotation number|boolean|nil Angle the viewer shows the panel at; a quarter turn fits the turned screen.
 --- @return table|nil viewport
-function PanelViewport.noCrop(rect, source_size)
+function PanelViewport.noCrop(rect, source_size, rotation)
     local rx = rect and rect.x or 0
     local ry = rect and rect.y or 0
     local rw = math.max(1, rect and rect.w or 0)
@@ -33,6 +35,9 @@ function PanelViewport.noCrop(rect, source_size)
     local source_w = source_size and source_size.w or 0
     local source_h = source_size and source_size.h or 0
     local screen_w, screen_h = Screen:getWidth(), Screen:getHeight()
+    if Spread.isQuarterTurn(rotation) then
+        screen_w, screen_h = screen_h, screen_w
+    end
 
     if screen_w <= 0 or screen_h <= 0 or source_w <= 0 or source_h <= 0 then
         return nil

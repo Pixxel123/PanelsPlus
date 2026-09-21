@@ -43,6 +43,8 @@ local Settings = {
         nav_transition_duration = 0.4,
         nav_transition_cross_page = true,
         nav_transition_frames = 8,
+        auto_rotate_spreads = "off",
+        spread_min_ratio = 1.2,
         detector = "components",
         -- Reflow-image detection has an independent preference, but its
         -- detector uses the same component pipeline as fixed pages.

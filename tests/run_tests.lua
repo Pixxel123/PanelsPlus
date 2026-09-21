@@ -32,6 +32,8 @@ local spec_modules = {
     "tests.spec.nativedetector_spec",
     "tests.spec.panelviewer_reader_gesture_spec",
     "tests.spec.viewer_controller_rotation_spec",
+    "tests.spec.spread_spec",
+    "tests.spec.spread_rotation_spec",
     "tests.spec.viewer_controller_more_config_spec",
     "tests.spec.panelviewer_leftedge_spec",
     "tests.spec.panelviewer_keyboard_nav_spec",

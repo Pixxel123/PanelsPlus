@@ -10,6 +10,7 @@ License: MIT; see the repository LICENSE file.
 SPDX-License-Identifier: MIT
 ]]
 local Blitbuffer = require("ffi/blitbuffer")
+local Geom = require("ui/geometry")
 local Geometry = require("src._geometry")
 local NativeDetector = require("src._nativedetector")
 local ComponentDetector = require("src._componentdetector")
@@ -17,6 +18,7 @@ local PageBitmap = require("src._pagebitmap")
 local Document = require("document/document")
 local PanelViewport = require("src._panelviewport")
 local Settings = require("src._settings")
+local Spread = require("src._spread")
 local Screen = require("device").screen
 
 --- Panel detection dispatch and lazy image-list construction.
@@ -73,6 +75,30 @@ local function getImageRect(rect, page_size, settings)
     return rect
 end
 
+--- Render part of a page for the angle it will be shown at.
+---
+--- `Document:drawPagePart()` fits the part to the upright screen. For a quarter turn that bitmap is
+--- too small, and ImageViewer scales it up after rotating it, which blurs it. Here the part is
+--- rendered at the zoom that fits the turned screen, with the same `scaled_rect` convention
+--- `drawPagePart()` uses.
+---
+--- @param document table KOReader document instance.
+--- @param page number Document page number.
+--- @param rect PPPanel Native rectangle to render.
+--- @param rotation number|boolean|nil Angle the viewer shows this page at.
+--- @return table|nil image Rendered blitbuffer, owned by KOReader's cache.
+--- @return boolean|nil rotated `drawPagePart()`'s own auto-rotation flag, `false` for a turned render.
+function PanelCollector.drawPart(document, page, rect, rotation)
+    if not Spread.isQuarterTurn(rotation) then
+        return document:drawPagePart(page, rect, 0)
+    end
+    local part = Geom:new({ x = rect.x, y = rect.y, w = rect.w, h = rect.h })
+    local zoom = math.min(Screen:getWidth() / part.h, Screen:getHeight() / part.w)
+    part.scaled_rect = document:transformRect(part, zoom, 0)
+    local tile = document:renderPage(page, part, zoom, 0, 1.0, 1.0, true)
+    return tile.bb, false
+end
+
 --- Build a centered canvas image for "No crop" mode.
 ---
 --- Centers the panel's width (`rect.w`) to fill the screen width (`Screen:getWidth()`),
@@ -83,16 +109,21 @@ end
 --- @param page number Document page number.
 --- @param rect PPPanel Native panel rectangle.
 --- @param page_size PPPageSize Page dimensions.
+--- @param images PPImageList Image list the render's auto-rotation flag is reported on.
+--- @param rotation number|boolean|nil Angle the viewer shows this page at; a quarter turn gets a canvas in the turned screen's shape.
 --- @return function image_func Lazy function returning the composite Blitbuffer image.
 --- @return PPPanel image_rect Bounding rectangle used for transition math.
-local function buildNoCropImage(document, page, rect, page_size, images)
+local function buildNoCropImage(document, page, rect, page_size, images, rotation)
     local screen_w = Screen:getWidth()
     local screen_h = Screen:getHeight()
-    local viewport = PanelViewport.noCrop(rect, page_size)
+    if Spread.isQuarterTurn(rotation) then
+        screen_w, screen_h = screen_h, screen_w
+    end
+    local viewport = PanelViewport.noCrop(rect, page_size, rotation)
     if not viewport then
         local image_rect = rect
         return function()
-            local img, rotate = document:drawPagePart(page, image_rect, 0)
+            local img, rotate = PanelCollector.drawPart(document, page, image_rect, rotation)
             images.rotated = rotate
             if img and img.copy then
                 return img:copy()
@@ -116,7 +147,7 @@ local function buildNoCropImage(document, page, rect, page_size, images)
             return canvas
         end
 
-        local content_image, rotate = document:drawPagePart(page, image_rect, 0)
+        local content_image, rotate = PanelCollector.drawPart(document, page, image_rect, rotation)
         images.rotated = rotate
         if not content_image then
             local canvas = Blitbuffer.new(screen_w, screen_h, Blitbuffer.TYPE_BWRGB_8888)
@@ -242,10 +273,12 @@ end
 --- @param page number Document page number.
 --- @param panels PPPanel[] Ordered panel rectangles.
 --- @param settings PPSettings Plugin settings.
+--- @param rotation number|boolean|nil Angle picked by hand, which every panel is shown at (see `drawPart`).
+--- @param spread_rotation number|nil Automatic angle for a whole-page view of this page (see `Spread.panelRotation`).
 --- @return PPImageList images Lazy image list for ImageViewer.
 --- @return PPPanel[] image_rects Crop rectangles matching `images`, for prerendering.
 --- @return boolean[] full_page_flags Per-panel flag matching `images`, for margin-mode gating.
-function PanelCollector.buildImages(ui, page, panels, settings)
+function PanelCollector.buildImages(ui, page, panels, settings, rotation, spread_rotation)
     local document = ui.document
     local page_size = document:getPageDimensions(page, 1, 0)
     settings = settings or Settings.defaults
@@ -256,16 +289,18 @@ function PanelCollector.buildImages(ui, page, panels, settings)
     local full_page_flags = {}
 
     for _, rect in ipairs(panels) do
-        table.insert(full_page_flags, isFullPagePanel(rect, page_size, settings))
+        local is_full_page = isFullPagePanel(rect, page_size, settings)
+        local panel_rotation = Spread.panelRotation(rotation, spread_rotation, is_full_page)
+        table.insert(full_page_flags, is_full_page)
         if settings.crop_mode == "none" then
-            local image_func, image_rect = buildNoCropImage(document, page, rect, page_size, images)
+            local image_func, image_rect = buildNoCropImage(document, page, rect, page_size, images, panel_rotation)
             table.insert(image_rects, image_rect)
             table.insert(images, image_func)
         else
             local image_rect = getImageRect(rect, page_size, settings)
             table.insert(image_rects, image_rect)
             table.insert(images, function()
-                local image, rotate = document:drawPagePart(page, image_rect, 0)
+                local image, rotate = PanelCollector.drawPart(document, page, image_rect, panel_rotation)
                 images.rotated = rotate
                 if image and image.copy then
                     return image:copy()
@@ -279,5 +314,6 @@ function PanelCollector.buildImages(ui, page, panels, settings)
 end
 
 PanelCollector._getImageRect = getImageRect
+PanelCollector.isFullPagePanel = isFullPagePanel
 
 return PanelCollector

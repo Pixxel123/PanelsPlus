@@ -71,6 +71,9 @@ SPDX-License-Identifier: MIT
 --- Panel-to-panel navigation transition style.
 --- @alias PPNavTransitionMode '"classic"'|'"smooth"'|'"animated"'
 
+--- Automatic rotation applied to double-page spreads.
+--- @alias PPAutoRotateSpreads '"off"'|'"cw"'|'"ccw"'
+
 --- Persisted plugin settings.
 --- @class PPSettings
 --- @field enabled boolean
@@ -90,6 +93,8 @@ SPDX-License-Identifier: MIT
 --- @field nav_transition_duration number Seconds the smooth camera pan takes.
 --- @field nav_transition_cross_page boolean Whether smooth navigation also animates across page boundaries.
 --- @field nav_transition_frames integer Number of discrete steps a smooth camera pan is split into.
+--- @field auto_rotate_spreads PPAutoRotateSpreads Rotation applied automatically to double-page spreads on a portrait screen.
+--- @field spread_min_ratio number Page width/height at or above which a page counts as a double-page spread.
 --- @field detector PPDetector
 --- @field embedded_detector PPDetector Bitmap-only detector for embedded EPUB/KEPUB/MOBI images.
 --- @field embedded_nav_transition_mode PPNavTransitionMode Navigation mode for embedded EPUB/KEPUB/MOBI images.
@@ -149,6 +154,7 @@ SPDX-License-Identifier: MIT
 --- @field start_idx integer 1-based panel index the crossing should land on.
 --- @field target_rect PPPanel Crop rectangle (post crop-mode expansion) for the landing panel.
 --- @field target_is_full_page boolean Whether the landing panel spans nearly the whole page.
+--- @field target_image_rotation number|boolean|nil Angle the adjacent page's viewer will open at.
 
 --- ImageViewer subclass for navigating one page's ordered panel sequence.
 ---
@@ -167,6 +173,8 @@ SPDX-License-Identifier: MIT
 --- @field kobo_vertical_gesture boolean Whether vertical swipes on the left edge zoom in/out (Kobo-style).
 --- @field panel_gesture string Gesture that opens panels on a page: "hold" (long press, the default) or "two_finger_tap".
 --- @field more_config_callback fun(viewer:PanelViewer):boolean|nil
+--- @field closed_callback fun(viewer:PanelViewer)|nil
+--- @field spread_image_rotation number|nil
 --- @field progress_bar_visible boolean Whether the bottom progress bar is shown.
 --- @field nav_transition_mode PPNavTransitionMode Classic, Smooth camera-pan, or framebuffer Animated navigation.
 --- @field nav_animated_panels boolean Whether Animated mode animates panel-to-panel switches.

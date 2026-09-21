@@ -7,6 +7,12 @@ All notable changes to the **Panels+** KOReader plugin are documented in this fi
 ### Added
 
 - "Open panels with" setting: a long press, as before, or a two-finger tap. With two-finger tap, a long press is left to KOReader and other plugins (for example Bubble Zoom).
+- **Auto-rotate double-page spreads**
+  - New setting `Auto-rotate double-page spreads` with `Off` (default), `Clockwise` and `Counter-clockwise`. It is in `More Panel Viewer Settings` under `[Rotation]` and in the plugin's main menu. A page counts as a spread when its native width/height ratio is at least `spread_min_ratio` (1.2).
+  - Reading page: the screen is rotated when a page turn lands on a spread and restored on the next normal page. The rotation happens before the page is painted, so it costs one refresh. A screen the user rotated to landscape is left alone, and a spread the user rotates back by hand is skipped. The temporary rotation is not written to the book's saved rotation.
+  - Panel viewer: the whole-spread view is rotated as an image, in the same direction as the reading page. Panels inside a spread stay upright. An angle set in the rotation picker still applies to every panel and takes priority. The picker's "no rotation" does not disable the setting, because the picker cannot reset to "never chosen" and that value stays saved after any hand rotation is undone.
+  - Rotated views are rendered at the size of the rotated screen. Before, a quarter-turned view was rendered for the upright screen (1272 px wide on a 1272x1696 screen) and scaled up by a third after rotation. This also covers views rotated from the picker when their viewer opens, the "No crop" canvas and the next-panel prerender.
+  - Smooth navigation falls back to an instant cut when the panel it leaves or lands on is rotated. The pan is computed for an upright bitmap, so on a rotated one it moved the wrong way and the zoom jumped at the end.
 
 ### Fixed
 

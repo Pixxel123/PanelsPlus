@@ -20,6 +20,7 @@ local Memory = require("src._memory")
 local RenderImage = require("ui/renderimage")
 local Screen = require("device").screen
 local Screenshoter = require("ui/widget/screenshoter")
+local Spread = require("src._spread")
 local Timing = require("src._timing")
 local UIManager = require("ui/uimanager")
 local OcrDebug = require("src._ocrdebug")
@@ -50,6 +51,17 @@ local NAV_TRANSITION_MIN_FREE_BYTES = 40 * 1024 * 1024
 --- @return number zoom Scale factor from page-space to screen-space.
 local function canvasFitZoom(rect)
     return math.min(Screen:getWidth() / (rect.w or 1), Screen:getHeight() / (rect.h or 1))
+end
+
+--- Whether a view is shown at an angle set by Panels+ (rotation picker or spread).
+---
+--- Smooth pans are computed for an upright bitmap. On a turned one the pan moves the wrong way and
+--- the zoom jumps at the end, so callers cut.
+---
+--- @param rotation number|boolean|nil A viewer's `rotated`, or a page's resolved image rotation.
+--- @return boolean turned `true` for a numeric angle. ImageViewer's boolean auto-rotation does not count.
+local function isTurned(rotation)
+    return type(rotation) == "number"
 end
 
 --- Angle the current bitmap is drawn at.
@@ -88,6 +100,8 @@ end
 --- @field tap_navigation boolean Whether tapping the left/right screen edges navigates between panels.
 --- @field swipe_navigation boolean Whether horizontal swipes navigate between panels.
 --- @field more_config_callback fun(viewer:PanelViewer):boolean|nil
+--- @field closed_callback fun(viewer:PanelViewer)|nil Called once the viewer has closed, however it was closed.
+--- @field spread_image_rotation number|nil Automatic angle for a whole-page view of this page; panels inside the spread stay upright.
 --- @field progress_bar_visible boolean Whether the bottom progress bar is shown.
 --- @field nav_transition_mode PPNavTransitionMode Classic, Smooth camera-pan, or framebuffer Animated navigation.
 --- @field nav_animated_panels boolean Whether Animated mode animates panel-to-panel switches.
@@ -133,6 +147,8 @@ local PanelViewer = ImageViewer:extend({
     tap_navigation = false,
     swipe_navigation = true,
     more_config_callback = nil,
+    closed_callback = nil,
+    spread_image_rotation = nil,
     progress_bar_visible = true,
     hold_text_selection = true,
     ocr_debug_mode = false,
@@ -1529,14 +1545,24 @@ function PanelViewer:onSaveImageView()
     return true
 end
 
+--- Angle for panel `index`. See `Spread.panelRotation`.
+---
+--- @param index integer 1-based image index.
+--- @return number|boolean|nil rotation Angle, `false` for none, or `nil` for the document default.
+function PanelViewer:imageRotationFor(index)
+    local is_full_page = self.panel_is_full_page and self.panel_is_full_page[index] == true
+    return Spread.panelRotation(self.image_rotation, self.spread_image_rotation, is_full_page)
+end
+
 --- Initialize ImageViewer state, controls, and first render.
 function PanelViewer:init()
     ImageViewer.init(self)
     if self._images_list then
         self.rotated = self._images_list.rotated
     end
-    if self.image_rotation ~= nil then
-        self.rotated = self.image_rotation
+    local rotation = self:imageRotationFor(self._images_list_cur or 1)
+    if rotation ~= nil then
+        self.rotated = rotation
     end
     self:replaceButtonTable()
     self:update()
@@ -1600,6 +1626,11 @@ function PanelViewer:onCloseWidget()
     self.bleed_ratio_callback = nil
     self.panel_prerender_callback = nil
     self.embedded_cleanup_callback = nil
+    local closed_callback = self.closed_callback
+    self.closed_callback = nil
+    if closed_callback then
+        pcall(closed_callback, self)
+    end
     pcall(WordFinder.cleanup)
     if not Memory.hasHeadroom(NAV_TRANSITION_MIN_FREE_BYTES) then
         collectgarbage("collect")
@@ -1671,8 +1702,9 @@ function PanelViewer:switchToImageNum(image_num)
     if type(self.image) == "function" then
         self.image = self.image()
         self.rotated = self._images_list.rotated
-        if self.image_rotation ~= nil then
-            self.rotated = self.image_rotation
+        local rotation = self:imageRotationFor(image_num)
+        if rotation ~= nil then
+            self.rotated = rotation
         end
     end
     self._images_list_cur = image_num
@@ -1711,6 +1743,9 @@ function PanelViewer:animateSwitchToImageNum(target)
     local cur = self._images_list_cur
     if target == cur or self._panels_plus_transition_active then
         return
+    end
+    if isTurned(self.rotated) or isTurned(self:imageRotationFor(target)) then
+        return self:switchToImageNum(target)
     end
     local rect_a = self.image_rects and self.image_rects[cur]
     local rect_b = self.image_rects and self.image_rects[target]
@@ -1947,6 +1982,12 @@ function PanelViewer:animateBoundaryTransition(direction)
     local rect_a = self.image_rects and self.image_rects[self._images_list_cur]
     local rect_b = resolved.target_rect
     if not rect_a or not rect_b then
+        return self.boundary_callback and self.boundary_callback(direction, self)
+    end
+
+    -- One side is turned. The strip is composited for upright bitmaps, so cut
+    -- (see `isTurned`).
+    if isTurned(self.rotated) or isTurned(resolved.target_image_rotation) then
         return self.boundary_callback and self.boundary_callback(direction, self)
     end
 

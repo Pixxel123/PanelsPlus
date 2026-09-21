@@ -329,3 +329,24 @@ msgstr "frames"
 
 msgid "true"
 msgstr "true"
+
+msgid "Auto-rotate double-page spreads"
+msgstr "Auto-rotate double-page spreads"
+
+msgid "Clockwise"
+msgstr "Clockwise"
+
+msgid "Counter-clockwise"
+msgstr "Counter-clockwise"
+
+msgid "Off"
+msgstr "Off"
+
+msgid "Rotates double-page spreads (pages much wider than they are tall) by a quarter turn to fill a portrait screen, and restores the rotation on the next normal page. On the reading page the screen is rotated. In the panel viewer only the whole-spread view is rotated and zoomed panels stay upright. Does nothing while the screen is in landscape or while an image rotation is set in the viewer's rotation picker."
+msgstr "Rotates double-page spreads (pages much wider than they are tall) by a quarter turn to fill a portrait screen, and restores the rotation on the next normal page. On the reading page the screen is rotated. In the panel viewer only the whole-spread view is rotated and zoomed panels stay upright. Does nothing while the screen is in landscape or while an image rotation is set in the viewer's rotation picker."
+
+msgid "Rotation"
+msgstr "Rotation"
+
+msgid "Auto-rotate spreads (Actual: "
+msgstr "Auto-rotate spreads (Actual: "

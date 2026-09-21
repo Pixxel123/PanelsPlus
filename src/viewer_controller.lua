@@ -16,6 +16,8 @@ local Memory = require("src._memory")
 local PanelCollector = require("src._panelcollector")
 local PanelViewer = require("src._panelviewer")
 local Settings = require("src._settings")
+local Spread = require("src._spread")
+local SpreadRotation = require("src.spread_rotation")
 local Timing = require("src._timing")
 local UIManager = require("ui/uimanager")
 
@@ -102,7 +104,8 @@ function ViewerController:prerenderNextPanel(viewer, index)
         end
         local stop = Timing.span("prerender panel " .. (index + 1))
         pcall(function()
-            self.ui.document:drawPagePart(viewer.page, next_rect, 0)
+            -- Same call as the panel's image, so the cached tile matches.
+            PanelCollector.drawPart(self.ui.document, viewer.page, next_rect, viewer:imageRotationFor(index + 1))
         end)
         stop()
     end
@@ -241,6 +244,60 @@ function ViewerController:setDeviceRotation(viewer, mode)
     UIManager:onRotation()
     self:showPanelViewerForPage(page, panels, start_idx, { buttons_visible = buttons_visible })
     return true
+end
+
+--- Native page size, or `nil`. Reflowable documents have no `getNativePageDimensions`, and a broken
+--- page can report a zero size.
+---
+--- @param page integer Document page number.
+--- @return number|nil width Native page width.
+--- @return number|nil height Native page height.
+function ViewerController:getNativePageSize(page)
+    local document = self.ui and self.ui.document
+    if not document or not document.getNativePageDimensions then
+        return nil
+    end
+    local ok, dimensions = pcall(document.getNativePageDimensions, document, page)
+    if not ok or type(dimensions) ~= "table" then
+        return nil
+    end
+    local width, height = dimensions.w, dimensions.h
+    if type(width) ~= "number" or type(height) ~= "number" or width <= 0 or height <= 0 then
+        return nil
+    end
+    return width, height
+end
+
+--- Spread angle for a whole-page view of `page`, or `nil`.
+---
+--- Returns `nil` while `image_rotation` holds an angle picked by hand, which applies to every page.
+--- `false` (the picker's "no rotation") does not block it: the picker cannot reset to `nil`, so
+--- `false` stays saved after any hand rotation is undone.
+---
+--- The angle is not saved. It depends on the page.
+---
+--- @param page integer Document page number.
+--- @return number|nil rotation Angle for a whole-page view of a spread, or `nil`.
+function ViewerController:resolveSpreadImageRotation(page)
+    if type(self.settings.image_rotation) == "number" then
+        return nil
+    end
+    local page_w, page_h = self:getNativePageSize(page)
+    if not page_w then
+        return nil
+    end
+    local angle = Spread.rotationFor({
+        mode = self.settings.auto_rotate_spreads or Settings.defaults.auto_rotate_spreads,
+        page_w = page_w,
+        page_h = page_h,
+        screen_w = Screen:getWidth(),
+        screen_h = Screen:getHeight(),
+        min_ratio = self.settings.spread_min_ratio or Settings.defaults.spread_min_ratio,
+    })
+    if angle then
+        Timing.log("resolveSpreadImageRotation: page=%d %dx%d -> %d", page, page_w, page_h, angle)
+    end
+    return angle
 end
 
 --- Persist a new plugin-only image rotation chosen from the rotation picker.
@@ -525,6 +582,33 @@ function ViewerController:armPanelTransitionAnimation(direction, viewer)
     return true
 end
 
+local AUTO_ROTATE_SPREADS_CYCLE = { off = "cw", cw = "ccw", ccw = "off" }
+
+--- Step `auto_rotate_spreads` from an open viewer.
+---
+--- Images are built for a fixed angle, so the viewer is rebuilt at the same panel when the page's
+--- spread angle changes, like `toggleViewerCropMode` does.
+---
+--- @param viewer PanelViewer Active panel viewer instance.
+--- @return PanelViewer viewer The viewer now on screen: a rebuilt one, or `viewer` itself.
+function ViewerController:cycleViewerAutoRotateSpreads(viewer)
+    self:setAutoRotateSpreads(AUTO_ROTATE_SPREADS_CYCLE[self.settings.auto_rotate_spreads] or "cw")
+    if not viewer.panels or #viewer.panels == 0 then
+        return viewer
+    end
+    if (self:resolveSpreadImageRotation(viewer.page) or false) == (viewer.spread_image_rotation or false) then
+        return viewer
+    end
+
+    local panels = viewer.panels
+    local start_idx = viewer._images_list_cur or 1
+    UIManager:close(viewer)
+    return self:showPanelViewerForPage(viewer.page, panels, start_idx, {
+        buttons_visible = true,
+        return_viewer = true,
+    })
+end
+
 --- Show a multi-options menu popup for miscellaneous panel viewer settings
 --- that don't need their own dedicated button.
 ---
@@ -660,6 +744,28 @@ function ViewerController:showMoreConfigMenu(viewer)
         },
     }
 
+    -- Embedded EPUB/KEPUB/MOBI images have no page size, so the setting is not
+    -- offered for them.
+    if not viewer.embedded_source_image then
+        local mode_labels = { off = _("Off"), cw = _("Clockwise"), ccw = _("Counter-clockwise") }
+        table.insert(menu_items, {
+            text = categorizedText(
+                _("Rotation"),
+                _("Auto-rotate spreads (Actual: ")
+                    .. (mode_labels[controller.settings.auto_rotate_spreads] or mode_labels.off)
+                    .. ")"
+            ),
+            callback = function()
+                UIManager:close(menu)
+                controller:showMoreConfigMenu(controller:cycleViewerAutoRotateSpreads(viewer))
+            end,
+            help_text = _(
+                "Rotates double-page spreads (pages much wider than they are tall) by a quarter turn to fill a portrait screen, and restores the rotation on the next normal page. On the reading page the screen is rotated. In the panel viewer only the whole-spread view is rotated and zoomed panels stay upright. Does nothing while the screen is in landscape or while an image rotation is set in the viewer's rotation picker."
+            ),
+            separator = true,
+        })
+    end
+
     table.insert(menu_items, {
         text = categorizedText(
             _("Performance"),
@@ -754,7 +860,14 @@ function ViewerController:showPanelViewerForPage(page, panels, start_idx, option
         tostring(self.settings.nav_transition_mode)
     )
     Timing.memory("show_panel_viewer")
-    local images, image_rects, full_page_flags = PanelCollector.buildImages(self.ui, page, panels, self.settings)
+    -- Restore the reader's rotation first if the screen was rotated for a
+    -- spread, so the viewer is laid out for it.
+    SpreadRotation.prepareSpreadRotationForViewer(self, page, panels)
+    -- The images and the viewer must use the same angles.
+    local image_rotation = self.settings.image_rotation
+    local spread_image_rotation = self:resolveSpreadImageRotation(page)
+    local images, image_rects, full_page_flags =
+        PanelCollector.buildImages(self.ui, page, panels, self.settings, image_rotation, spread_image_rotation)
     local viewer
     viewer = PanelViewer:new({
         image = images,
@@ -781,7 +894,8 @@ function ViewerController:showPanelViewerForPage(page, panels, start_idx, option
         progress_bar_visible = self.settings.progress_bar_visible ~= false,
         hold_text_selection = self.settings.hold_text_selection ~= false,
         ocr_debug_mode = self.settings.ocr_debug_mode == true,
-        image_rotation = self.settings.image_rotation,
+        image_rotation = image_rotation,
+        spread_image_rotation = spread_image_rotation,
         nav_transition_mode = self.settings.nav_transition_mode or "classic",
         nav_animated_panels = self.settings.nav_animated_panels ~= false,
         nav_animated_pages = self.settings.nav_animated_pages ~= false,
@@ -842,7 +956,13 @@ function ViewerController:showPanelViewerForPage(page, panels, start_idx, option
         more_config_callback = function(current_viewer)
             return self:showMoreConfigMenu(current_viewer)
         end,
+        closed_callback = function(closed_viewer)
+            SpreadRotation.onPanelViewerClosed(self, closed_viewer)
+        end,
     })
+    -- Set before the replaced viewer closes, so its close is not treated as
+    -- leaving the viewer.
+    self.active_panel_viewer = viewer
 
     if options.replace_viewer then
         self:armPageTurnAnimation(options.boundary_direction, options.replace_viewer)
@@ -897,14 +1017,24 @@ function ViewerController:resolveBoundaryTarget(direction, current_viewer)
     end
 
     local start_idx = direction == "next" and 1 or #cached_panels
-    local next_images, image_rects, full_page_flags =
-        PanelCollector.buildImages(self.ui, next_page, cached_panels, self.settings)
+    local image_rotation = self.settings.image_rotation
+    local spread_image_rotation = self:resolveSpreadImageRotation(next_page)
+    local next_images, image_rects, full_page_flags = PanelCollector.buildImages(
+        self.ui,
+        next_page,
+        cached_panels,
+        self.settings,
+        image_rotation,
+        spread_image_rotation
+    )
+    local target_is_full_page = full_page_flags and full_page_flags[start_idx] == true or false
     return {
         next_page = next_page,
         panels = cached_panels,
         start_idx = start_idx,
         target_rect = image_rects[start_idx],
-        target_is_full_page = full_page_flags and full_page_flags[start_idx] == true or false,
+        target_is_full_page = target_is_full_page,
+        target_image_rotation = Spread.panelRotation(image_rotation, spread_image_rotation, target_is_full_page),
         next_images = next_images,
     }
 end

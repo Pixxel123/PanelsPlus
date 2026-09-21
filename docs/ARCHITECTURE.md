@@ -141,6 +141,8 @@ flowchart TD
 | `src/_panelviewport.lua` | Shared strict/margin/no-crop viewport geometry |
 | `src/_wordfinder.lua` | Comic-lettering-aware word-box finder for touch-and-hold lookup, replacing KOReader's prose-tuned gap detector |
 | `src/_rotationpicker.lua` | Modal dialog for device rotation vs. plugin-only image rotation |
+| `src/_spread.lua` | Double-page spread detection and rotation angles (no KOReader dependencies) |
+| `src/spread_rotation.lua` | Screen rotation for double-page spreads on the reading page |
 | `src/_ocrdebug.lua` | Opt-in OCR review loop: correct/incorrect prompts, session log, cropped debug images (see [WORD-LOOKUP.md](WORD-LOOKUP.md)) |
 | `src/native_panel_zoom.lua` | Patching and restoring `onPanelZoom` |
 | `src/_geometry.lua` | Rectangle helpers and reading-order sorting |
@@ -338,6 +340,73 @@ orientation). Image rotation is persisted on `PPSettings.image_rotation`
 (`nil` means "let document auto-rotation decide") and re-applied on every
 panel switch in `PanelViewer:switchToImageNum`, since document auto-rotation
 would otherwise reset it each time a new panel is shown.
+
+### Automatic spread rotation
+
+`PPSettings.auto_rotate_spreads` (`"off"`, `"cw"`, `"ccw"`) rotates double-page
+spreads by a quarter turn. A page is a spread when its native width/height ratio
+is at least `PPSettings.spread_min_ratio` (`Spread.isSpread` in
+[`src/_spread.lua`](../src/_spread.lua)). The angle is computed per page and is
+not saved.
+
+Reading page ([`src/spread_rotation.lua`](../src/spread_rotation.lua)):
+
+- `onPageUpdate` runs before the new page is painted. For a spread it requests
+  the rotation mode from `Spread.deviceRotationFor` through `SetRotationMode`
+  and stores `{ base, target }` in `spread_rotation`. The next normal page and
+  `onCloseDocument` restore `base`.
+- A landscape base rotation is left alone. A `SetRotationMode` from elsewhere
+  while a spread is rotated drops the hold, and that page is skipped
+  (`spread_rotation_declined_page`).
+- `ReaderView:onSaveSettings` saves the current screen rotation. `main.lua`'s
+  `onSaveSettings` calls `keepSpreadRotationOutOfDocSettings`, which writes
+  `base` over `kopt_rotation_mode`. Core modules handle `SaveSettings` before
+  plugins.
+- Nothing is rotated before `startSpreadRotation` runs from `onReaderReady`.
+  KOReader sends the first `PageUpdate` while `ReaderUI` is still being built
+  and cannot receive a rotation request.
+
+Panel viewer:
+
+- `image_rotation` (rotation picker) keeps its meaning and applies to every
+  panel. `ViewerController:resolveSpreadImageRotation` returns the spread angle
+  for a page, or `nil` while `image_rotation` holds an angle. `false` (the
+  picker's "no rotation") does not block it, because the picker cannot reset to
+  `nil`.
+- `Spread.panelRotation(hand, spread, is_full_page)` gives the angle for one
+  panel. Only a panel that covers the whole page gets the spread angle.
+  `PanelViewer:imageRotationFor` applies it in `init` and `switchToImageNum`.
+- `PanelCollector.buildImages` gets the same angles. `Document:drawPagePart()`
+  fits a part to the upright screen, so a quarter-turned view would be rendered
+  too small and scaled up. `PanelCollector.drawPart` renders it at the zoom that
+  fits the rotated screen, `PanelViewport.noCrop` lays out the "No crop" canvas
+  for it, and the next-panel prerender uses the same call. Images are built once
+  per viewer, so an angle picked while a viewer is open gets this render when
+  the next viewer opens.
+- Smooth navigation is computed for an upright bitmap.
+  `animateSwitchToImageNum` and `animateBoundaryTransition` cut when the panel
+  they leave or land on is rotated. `resolveBoundaryTarget` reports the landing
+  panel's angle as `target_image_rotation`.
+
+Direction: `ImageWidget.rotation_angle` turns the bitmap counter-clockwise
+(`BlitBuffer:rotatedCopy(90)` maps displayed `(x, y)` to source
+`(w - y - 1, x)`), so clockwise is 270. In screen rotation mode 1 the page's top
+is on the device's left edge (the Up key maps to Right), which matches the
+viewer's 90, so clockwise on the reading page is mode 3.
+
+Hand-over between the two:
+
+- Page updates are ignored while a viewer is open.
+- `showPanelViewerForPage` calls `prepareSpreadRotationForViewer` first. It
+  restores `base` so panels are shown upright. The landscape screen is kept when
+  every panel of the rotated spread covers the whole page.
+- `PanelViewer`'s `closed_callback` reports a closed viewer (not one replaced by
+  the next page's viewer). The current page is then handled on the next tick.
+
+The setting is a submenu in the plugin's main menu and a `[Rotation]` item in
+`ViewerController:showMoreConfigMenu`. `cycleViewerAutoRotateSpreads` steps the
+mode and rebuilds the open viewer when the page's spread angle changed. The item
+is not offered for embedded EPUB/KEPUB/MOBI images, which have no page size.
 
 ## Night mode
 
